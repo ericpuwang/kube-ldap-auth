@@ -86,6 +86,7 @@ func (option *KubeLdapAuthOptions) Flags() cliflag.NamedFlagSets {
 	fs.StringVar(&option.AuthnConfig.Header.GroupsFieldName, "auth-header-groups-field-name", "x-remote-groups", "http请求header,包含当前请求认证用户所在组")
 	fs.StringVar(&option.AuthnConfig.Header.GroupSeparator, "auth-header-groups-separator", "|", "组名之间的分隔符")
 	fs.StringVar(&option.AuthnConfig.Ldap.ServerURI, "auth-ldap-server-uri", "", "ldap地址")
+	fs.StringVar(&option.AuthnConfig.Ldap.BaseDn, "auth-ldap-base-dn", "", "ldap base dn")
 
 	return namedFlagSets
 }

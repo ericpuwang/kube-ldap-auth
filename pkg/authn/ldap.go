@@ -1,7 +1,7 @@
 package authn
 
 import (
-	"encoding/json"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/go-ldap/ldap/v3"
@@ -24,11 +24,28 @@ func NewLdapAuthenticator(config *LdapConfig) (*LdapAuthenticator, error) {
 }
 
 func (auth *LdapAuthenticator) AuthenticateRequest(req *http.Request) (*authenticator.Response, bool, error) {
-	body := &LoginRequest{}
-	if err := json.NewDecoder(req.Body).Decode(body); err != nil {
-		klog.ErrorS(err, "入参解析失败")
+	authHeader := strings.TrimSpace(req.Header.Get("Authorization"))
+	if authHeader == "" {
+		return nil, false, nil
+	}
+	parts := strings.SplitN(authHeader, " ", 3)
+	if len(parts) < 2 || strings.ToLower(parts[0]) != "basic" {
+		return nil, false, nil
+	}
+
+	authHeaderVal := parts[1]
+
+	// Empty bearer tokens aren't valid
+	if len(authHeaderVal) == 0 {
+		return nil, false, nil
+	}
+
+	token, err := base64.StdEncoding.DecodeString(authHeaderVal)
+	if err != nil {
+		klog.Error(err)
 		return nil, false, err
 	}
+	userInfo := strings.Split(string(token), ":")
 
 	// 连接到ldap server
 	conn, err := ldap.Dial("tcp", auth.config.ServerURI)
@@ -45,47 +62,47 @@ func (auth *LdapAuthenticator) AuthenticateRequest(req *http.Request) (*authenti
 
 	// 找到objectClass=posixAccount且uid={body.Username}的记录
 	userResult, err := conn.Search(ldap.NewSearchRequest(
-		os.Getenv("LDAP_BASE_DN"),
+		auth.config.BaseDn,
 		ldap.ScopeWholeSubtree,
 		ldap.NeverDerefAliases,
 		0,
 		0,
 		false,
-		fmt.Sprintf("(&(objectClass=posixAccount)(uid=%s))", body.Username), // Filter
+		fmt.Sprintf("(&(objectClass=posixAccount)(uid=%s))", userInfo[0]), // Filter
 		nil,
 		nil,
 	))
 	if err != nil {
-		klog.ErrorS(err, "LDAP搜索异常", "objectClass", "posixAccount", "uid", body.Username, "baseDn", os.Getenv("LDAP_BASE_DN"))
+		klog.ErrorS(err, "LDAP搜索异常", "objectClass", "posixAccount", "uid", userInfo[0], "baseDn", auth.config.BaseDn)
 		return nil, false, err
 	}
 
-	// 找到objectClass=posixGroup且memberUid={body.Username}的记录
+	// 找到objectClass=groupOfNames且member={dn}的记录
 	result, err := conn.Search(ldap.NewSearchRequest(
-		os.Getenv("LDAP_BASE_DN"),
+		auth.config.BaseDn,
 		ldap.ScopeWholeSubtree,
 		ldap.NeverDerefAliases,
 		0,
 		0,
 		false,
-		fmt.Sprintf("(&(objectClass=posixGroup)(memberUid=%s))", body.Username), // Filter
+		fmt.Sprintf("(&(objectClass=groupOfNames)(member=%s))", userResult.Entries[0].DN), // Filter
 		nil,
 		nil,
 	))
 	if err != nil {
-		klog.ErrorS(err, "LDAP搜索异常", "objectClass", "posixGroup", "memberUid", body.Username, "baseDn", os.Getenv("LDAP_BASE_DN"))
+		klog.ErrorS(err, "LDAP搜索异常", "objectClass", "posixGroup", "memberUid", userInfo[0], "baseDn", auth.config.BaseDn)
 		return nil, false, err
 	}
 	if len(result.Entries) == 0 {
-		klog.V(2).InfoS("用户不存在", "username", body.Username, "baseDn", os.Getenv("LDAP_BASE_DN"))
+		klog.V(2).InfoS("用户不存在", "username", userInfo[0], "baseDn", auth.config.BaseDn)
 		return nil, false, errors.New("用户名或密码错误")
 	}
 
-	if err := conn.Bind(userResult.Entries[0].DN, body.Password); err != nil {
-		klog.ErrorS(err, "认证失败", "user", body.Username)
+	if err := conn.Bind(userResult.Entries[0].DN, userInfo[1]); err != nil {
+		klog.ErrorS(err, "认证失败", "user", userInfo[0])
 		return nil, false, errors.New("用户名或密码错误")
 	}
-	klog.V(3).Info(fmt.Sprintf("User %s Authenticated successfuly!", body.Username))
+	klog.V(3).Info(fmt.Sprintf("User %s Authenticated successfuly!", userInfo[0]))
 
 	authUser := new(user.DefaultInfo)
 	for _, v := range result.Entries {

@@ -18,12 +18,12 @@ func Handler(allowPaths []string, direct, proxy http.Handler) http.Handler {
 				return
 			}
 
-			if !found {
-				proxy.ServeHTTP(w, req)
+			if found {
+				direct.ServeHTTP(w, req)
 				return
 			}
 		}
 
-		direct.ServeHTTP(w, req)
+		proxy.ServeHTTP(w, req)
 	})
 }

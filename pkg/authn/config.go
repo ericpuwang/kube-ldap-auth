@@ -14,6 +14,7 @@ type HeaderConfig struct {
 
 type LdapConfig struct {
 	ServerURI string // 127.0.0.1:389
+	BaseDn    string
 }
 
 type LoginRequest struct {
